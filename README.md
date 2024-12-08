@@ -43,7 +43,7 @@ Example:
 ```
 sudo ./hestia_proxy.sh
 ```
-<img src="https://github.com/user-attachments/assets/f4cc816c-cc35-475a-9e95-453de20b94c5" style="width:60%;">
+<img src="https://github.com/user-attachments/assets/f4cc816c-cc35-475a-9e95-453de20b94c5" style="width:80%;">
 
 or
 
