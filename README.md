@@ -36,11 +36,12 @@ or
 git clone https://github.com/vtstv/hestia-proxy.git && cd hestia-proxy && chmod +x ./hestia-proxy.sh
 ```
 
+##Modes of Operation
 
-Modes of Operation
 This script supports two modes of operation:
 
-Interactive Mode:
+**Interactive Mode:**
+
 Run the script without arguments to enter an interactive menu for managing templates and domains.
 Example:
 
@@ -48,8 +49,10 @@ sudo ./hestia-proxy.sh
 
 or
 
-Command-Line Mode:
+**Command-Line Mode:**
+
 Run the script with arguments for direct execution of specific tasks.
+
 Examples:
 
 Full Domain Setup for a User
@@ -72,16 +75,19 @@ Deletes the reverse_proxy_template and backs it up in the nginx_backup directory
 
 
 
-Notes
+**Notes**
+
 Backup Your Data: Always back up your templates and configurations before making changes.
 Ensure HestiaCP Installation: This script assumes HestiaCP is installed and operational.
 Permissions: Run the script as the root user or with sudo for proper access.
 
-Compatibility
+**Compatibility**
+
 ⚠️ This is an early version of the script, tested on Ubuntu 22.04 LTS with HestiaCP 1.8.12.
 Use it with caution and ensure you test it in a development environment before applying it to production servers.
 
 License
+
 This project is licensed under the MIT License.
 
 I hope a native solution for reverse proxy will be added to HestiaCP, so we won't have to rely on such methods...
