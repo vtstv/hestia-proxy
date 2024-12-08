@@ -36,6 +36,7 @@ display_help() {
     echo -e "  ${GREEN}delete${NC}                Delete an existing template"
     echo -e "  ${GREEN}edit${NC}                  Edit domain Nginx configuration"
     echo -e "  ${GREEN}configs${NC}               List domain configurations"
+    echo -e "  ${GREEN}fix_ssl${NC}               Reapply / Fix SSL for a domain"
     echo -e "  ${GREEN}--help${NC}, ${GREEN}-h${NC}            Show this help message"
     echo
     echo -e "${YELLOW}Examples:${NC}"
@@ -53,6 +54,9 @@ display_help() {
     echo
     echo "  # Edit a domain's Nginx configuration"
     echo -e "  ${CYAN}$0 edit domain.com${NC}"
+    echo
+    echo "  # Reapply / Fix SSL for a domain"
+    echo -e "  ${CYAN}$0 fix-ssl hestiacp_user domain.com${NC}"
     echo
     echo -e "${RED}Note:${NC} This script must be run with root privileges"
     echo
@@ -238,13 +242,47 @@ list_configs() {
     ls "$CONFIG_DIR"
 }
 
+# Reapply / Fix SSL for a domain
+fix_ssl() {
+    local HESTIA_USER="$1"
+    local DOMAIN="$2"
+
+    if [[ -z "$HESTIA_USER" || -z "$DOMAIN" ]]; then
+        log_message error "Usage: $0 fix-ssl [hestiacp_user] [domain.com]"
+        exit 1
+    fi
+
+    log_message info "Reapplying SSL for domain: $DOMAIN (User: $HESTIA_USER)"
+
+    "$HESTIA/bin/v-change-web-domain-tpl" "$HESTIA_USER" "$DOMAIN" "default"
+    if [[ $? -ne 0 ]]; then
+        log_message error "Failed to set template to 'Default' for $DOMAIN"
+        exit 1
+    fi
+
+    "$HESTIA/bin/v-add-letsencrypt-domain" "$HESTIA_USER" "$DOMAIN"
+    if [[ $? -ne 0 ]]; then
+        log_message error "Failed to apply Let's Encrypt SSL for $DOMAIN"
+        log_message error "Check $HESTIA/logs/LE-* for details."
+        exit 1
+    fi
+    log_message info "Successfully applied Let's Encrypt SSL for $DOMAIN"
+
+    "$HESTIA/bin/v-change-web-domain-tpl" "$HESTIA_USER" "$DOMAIN" "$DOMAIN"
+    if [[ $? -ne 0 ]]; then
+        log_message error "Failed to reapply custom template for $DOMAIN"
+        exit 1
+    fi
+    log_message info "Successfully reapplied custom template for $DOMAIN"
+}
+
 interactive_mode() {
     PS3="Select an option: "
-    options=("Add only Proxy Template" "Complete Domain Setup" "List Templates" "Delete Template" "Edit Configuration" "List Configurations" "Exit")
+    options=("Add Proxy Template" "Complete Domain Setup" "List Templates" "Delete Template" "Edit Configuration" "List Configurations" "Fix SSL for a Domain" "Exit")
 
     select opt in "${options[@]}"; do
         case $opt in
-        "Add Proxy only Template")
+        "Add Proxy Template")
             read -p "Enter template name: " template_name
             read -p "Enter proxy target (e.g., http://127.0.0.1:8080): " proxy_target
             PROXY_TARGET="$proxy_target" create_template "$template_name"
@@ -269,6 +307,11 @@ interactive_mode() {
         "List Configurations")
             list_configs
             ;;
+        "Fix SSL for a Domain")
+            read -p "Enter HestiaCP username: " hestia_user
+            read -p "Enter domain name: " domain
+            fix_ssl "$hestia_user" "$domain"
+            ;;
         "Exit")
             break
             ;;
@@ -280,7 +323,6 @@ interactive_mode() {
 }
 
 main() {
-
     if [[ "$1" == "--help" ]] || [[ "$1" == "-h" ]]; then
         display_help
         exit 0
@@ -312,6 +354,9 @@ main() {
         ;;
     configs)
         list_configs
+        ;;
+    fix-ssl)
+        fix_ssl "$2" "$3"
         ;;
     *)
         if [[ $# -eq 0 ]]; then

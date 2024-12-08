@@ -49,7 +49,7 @@ sudo ./hestia_proxy.sh
 ```
 or
 
-**Command-Line Mode:**
+**CLI Mode:**
 
 Run the script with arguments for direct execution of specific tasks.
 
