@@ -2,7 +2,7 @@
 
 # HestiaCP Nginx Template Manager
 # https://github.com/vtstv/hestia-proxy
-# hestia_proxy v0.2
+# hestia_proxy v0.3
 
 # Check if the script is run as root
 if [[ $EUID -ne 0 ]]; then
@@ -210,8 +210,34 @@ complete_domain_setup() {
 # List available templates
 list_templates() {
     log_message info "Available Nginx Templates:"
-    ls "$TEMPLATE_DIR"/*.tpl 2>/dev/null | sed 's/.*\///; s/\.tpl$//'
+    
+    # List .tpl files and extract template names
+    local templates
+    templates=($(ls "$TEMPLATE_DIR"/*.tpl 2>/dev/null | sed 's/.*\///; s/\.tpl$//'))
+
+    if [[ ${#templates[@]} -eq 0 ]]; then
+        log_message warning "No templates found in $TEMPLATE_DIR"
+        return
+    fi
+
+    # Loop through each template and validate domain format
+    local valid_templates=()
+    for template in "${templates[@]}"; do
+        if [[ "$template" =~ ^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$ ]]; then
+            valid_templates+=("$template")
+        fi
+    done
+
+    # Display valid templates
+    if [[ ${#valid_templates[@]} -eq 0 ]]; then
+        log_message warning "No templates with a valid domain format found."
+    else
+        for template in "${valid_templates[@]}"; do
+            echo "- $template"
+        done
+    fi
 }
+
 
 # Delete a template
 delete_template() {
@@ -265,8 +291,41 @@ edit_nginx_config() {
 # List domain configurations
 list_configs() {
     log_message info "Domain Configurations:"
-    ls "$CONFIG_DIR"
+    
+    # Extract unique domain names from the configuration files
+    local domains
+    domains=($(ls "$CONFIG_DIR" | sed -E 's/\.(ssl\.)?conf$//' | sort -u))
+
+    if [[ ${#domains[@]} -eq 0 ]]; then
+        log_message error "No domain configurations found in $CONFIG_DIR"
+        return 1
+    fi
+
+    # Display the list of domains with numbering
+    echo -e "${CYAN}Available Domains:${NC}"
+    for i in "${!domains[@]}"; do
+        echo "$((i + 1)). ${domains[i]}"
+    done
+
+    # Prompt the user to select a domain by number
+    echo -e "${YELLOW}Enter the number of the domain you want to edit, or 0 to cancel:${NC}"
+    read -p "Selection: " selection
+
+    # Validate selection
+    if [[ ! "$selection" =~ ^[0-9]+$ ]] || (( selection < 1 || selection > ${#domains[@]} )); then
+        if [[ "$selection" -eq 0 ]]; then
+            log_message info "Operation canceled."
+        else
+            log_message error "Invalid selection. Please try again."
+        fi
+        return 1
+    fi
+
+    # Call edit_nginx_config with the selected domain
+    local selected_domain="${domains[$((selection - 1))]}"
+    edit_nginx_config "$selected_domain"
 }
+
 
 # Reapply / Fix SSL for a domain
 fix_ssl() {
