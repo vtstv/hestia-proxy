@@ -33,7 +33,7 @@ Clone this repository to your server:
 or 
 
 ```
-git clone https://github.com/vtstv/hestia-proxy.git && cd hestia-proxy && chmod +x ./hestia-proxy.sh
+git clone https://github.com/vtstv/hestia-proxy.git && cd hestia-proxy && chmod +x ./hestia_proxy.sh
 ```
 
 ## Modes of Operation
