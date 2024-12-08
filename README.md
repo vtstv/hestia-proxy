@@ -29,7 +29,7 @@ Clone this repository to your server:
    
    git clone https://github.com/vtstv/hestia-proxy.git
    cd hestia-proxy
-   chmod +x ./hestia-proxy.sh
+   chmod +x ./hestia_proxy.sh
 or 
 
 ```
@@ -45,7 +45,7 @@ This script supports two modes of operation:
 Run the script without arguments to enter an interactive menu for managing templates and domains.
 Example:
 ```
-sudo ./hestia-proxy.sh
+sudo ./hestia_proxy.sh
 ```
 or
 
@@ -57,19 +57,19 @@ Examples:
 
 Full Domain Setup for a User
 ```
-sudo ./hestia-proxy.sh add hestia_user mywebsite.com http://192.168.1.100:5000
+sudo ./hestia_proxy.sh add hestia_user mywebsite.com http://192.168.1.100:5000
 ```
 This sets up a domain (mywebsite.com) for the user hestia_user with a reverse proxy to http://192.168.1.100:5000, including SSL configuration.
 
 Adding a Reverse Proxy Template
 ```
-sudo ./hestia-proxy.sh add domain.com http://127.0.0.1:3000
+sudo ./hestia_proxy.sh add domain.com http://127.0.0.1:3000
 ```
 This command creates a new reverse proxy template named domain.com pointing to a backend service running on http://127.0.0.1:3000.
 
 Deleting an Existing Template
 ```
-sudo ./hestia-proxy.sh delete domain.com
+sudo ./hestia_proxy.sh delete domain.com
 ```
 Deletes the reverse_proxy_template and backs it up in the nginx_backup directory.
 
