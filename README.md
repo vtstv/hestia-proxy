@@ -65,7 +65,7 @@ Adding a Reverse Proxy Template
 ```
 sudo ./hestia-proxy.sh add domain.com http://127.0.0.1:3000
 ```
-This command creates a new reverse proxy template named reverse_proxy_template pointing to a backend service running on http://127.0.0.1:3000.
+This command creates a new reverse proxy template named domain.com pointing to a backend service running on http://127.0.0.1:3000.
 
 Deleting an Existing Template
 ```
