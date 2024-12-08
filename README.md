@@ -44,9 +44,9 @@ This script supports two modes of operation:
 
 Run the script without arguments to enter an interactive menu for managing templates and domains.
 Example:
-
+```
 sudo ./hestia-proxy.sh
-
+```
 or
 
 **Command-Line Mode:**
