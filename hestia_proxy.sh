@@ -122,8 +122,33 @@ create_template() {
     local DOMAIN_NAME="${1:-default_template}"
     local PROXY_TARGET="${2:-http://127.0.0.1:8080}"
 
+    # Check for empty input
+    if [[ -z "$DOMAIN_NAME" ]]; then
+        log_message error "Template name cannot be empty"
+        return
+    fi
+
+    # Use valid_templates logic for domain validation
+    local valid_templates=()
+    if [[ "$DOMAIN_NAME" =~ ^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$ ]]; then
+        valid_templates+=("$DOMAIN_NAME")
+    fi
+
+    if [[ ${#valid_templates[@]} -eq 0 ]]; then
+        log_message error "'$DOMAIN_NAME' is not a valid domain name"
+        return
+    fi
+
+    # Check for duplicates
+    if [[ -e "$TEMPLATE_DIR/$DOMAIN_NAME.tpl" || -e "$TEMPLATE_DIR/$DOMAIN_NAME.stpl" ]]; then
+        log_message error "A template with the name '$DOMAIN_NAME' already exists"
+        return
+    fi
+
+    # Ensure the template directory exists
     mkdir -p "$TEMPLATE_DIR"
 
+    # Create the HTTP template
     cat <<EOF >"$TEMPLATE_DIR/$DOMAIN_NAME.tpl"
 server {
     listen      %ip%:%web_port%;
@@ -138,6 +163,7 @@ server {
 }
 EOF
 
+    # Create the HTTPS template
     cat <<EOF >"$TEMPLATE_DIR/$DOMAIN_NAME.stpl"
 server {
     listen      %ip%:%web_ssl_port% ssl http2;
@@ -156,6 +182,7 @@ EOF
 
     log_message info "Created Nginx templates for $DOMAIN_NAME"
 }
+
 
 complete_domain_setup() {
     local HESTIA_USER="$1"
@@ -207,10 +234,9 @@ complete_domain_setup() {
     return 0
 }
 
-# List available templates
 list_templates() {
     log_message info "Available Nginx Templates:"
-    
+
     # List .tpl files and extract template names
     local templates
     templates=($(ls "$TEMPLATE_DIR"/*.tpl 2>/dev/null | sed 's/.*\///; s/\.tpl$//'))
@@ -220,7 +246,7 @@ list_templates() {
         return
     fi
 
-    # Loop through each template and validate domain format
+    # Validate domain names and collect valid templates
     local valid_templates=()
     for template in "${templates[@]}"; do
         if [[ "$template" =~ ^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$ ]]; then
@@ -228,25 +254,87 @@ list_templates() {
         fi
     done
 
-    # Display valid templates
+    # Display valid templates with numbers
     if [[ ${#valid_templates[@]} -eq 0 ]]; then
         log_message warning "No templates with a valid domain format found."
-    else
-        for template in "${valid_templates[@]}"; do
-            echo "- $template"
-        done
+        return
     fi
+
+    echo
+    echo "Select a template to edit (e) or delete (d):"
+    for i in "${!valid_templates[@]}"; do
+        echo "$((i + 1))) ${valid_templates[$i]}"
+    done
+    echo "q) Quit"
+
+    # Prompt for user choice
+    while true; do
+        read -p "Enter your choice (e.g., '2e' to edit, '3d' to delete): " choice
+        if [[ "$choice" == "q" ]]; then
+            echo "Exiting."
+            break
+        elif [[ "$choice" =~ ^([0-9]+)([ed])$ ]]; then
+            local index=$((BASH_REMATCH[1] - 1))
+            local action=${BASH_REMATCH[2]}
+            if [[ $index -ge 0 && $index -lt ${#valid_templates[@]} ]]; then
+                local template="${valid_templates[$index]}"
+                case "$action" in
+                e)
+                    edit_template "$template"
+                    ;;
+                d)
+                    delete_template "$template"
+                    ;;
+                *)
+                    log_message error "Invalid action."
+                    ;;
+                esac
+            else
+                log_message error "Invalid selection."
+            fi
+        else
+            log_message error "Invalid input. Use a number followed by 'e' (edit) or 'd' (delete)."
+        fi
+    done
 }
 
+# Edit a template (fallback to vim if nano unavailable)
+edit_template() {
+    local template="$1"
+    local file_path="$TEMPLATE_DIR/$template.tpl"
 
-# Delete a template
+    if [[ ! -f "$file_path" ]]; then
+        log_message error "Template file not found: $file_path"
+        return
+    fi
+
+    local editor=${EDITOR:-nano}
+    if ! command -v "$editor" &>/dev/null; then
+        editor="vim"
+    fi
+
+    # Open the template file with the selected editor
+    "$editor" "$file_path"
+    log_message info "Edited template: $template"
+}
+
+# Delete a template (with confirmation)
 delete_template() {
     local TEMPLATE_NAME="$1"
 
     if [[ -z "$TEMPLATE_NAME" ]]; then
         log_message error "Please specify a template name to delete"
-        exit 1
+        return
     fi
+
+    # Confirmation prompt
+    read -p "Are you sure you want to delete the template '$TEMPLATE_NAME'? (y/N): " confirm
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        log_message info "Deletion of template '$TEMPLATE_NAME' canceled"
+        return
+    fi
+
+    # Backup directory
 
     mkdir -p "$BACKUP_DIR"
 
@@ -258,7 +346,7 @@ delete_template() {
     rm "$TEMPLATE_DIR/$TEMPLATE_NAME.tpl" 2>/dev/null
     rm "$TEMPLATE_DIR/$TEMPLATE_NAME.stpl" 2>/dev/null
 
-    log_message info "Deleted template $TEMPLATE_NAME (backed up in $BACKUP_DIR)"
+    log_message info "Deleted template '$TEMPLATE_NAME' (backed up in $BACKUP_DIR)"
 }
 
 edit_nginx_config() {
@@ -291,7 +379,7 @@ edit_nginx_config() {
 # List domain configurations
 list_configs() {
     log_message info "Domain Configurations:"
-    
+
     # Extract unique domain names from the configuration files
     local domains
     domains=($(ls "$CONFIG_DIR" | sed -E 's/\.(ssl\.)?conf$//' | sort -u))
@@ -312,7 +400,7 @@ list_configs() {
     read -p "Selection: " selection
 
     # Validate selection
-    if [[ ! "$selection" =~ ^[0-9]+$ ]] || (( selection < 1 || selection > ${#domains[@]} )); then
+    if [[ ! "$selection" =~ ^[0-9]+$ ]] || ((selection < 1 || selection > ${#domains[@]})); then
         if [[ "$selection" -eq 0 ]]; then
             log_message info "Operation canceled."
         else
@@ -325,7 +413,6 @@ list_configs() {
     local selected_domain="${domains[$((selection - 1))]}"
     edit_nginx_config "$selected_domain"
 }
-
 
 # Reapply / Fix SSL for a domain
 fix_ssl() {
