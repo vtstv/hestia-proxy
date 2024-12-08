@@ -36,7 +36,7 @@ or
 git clone https://github.com/vtstv/hestia-proxy.git && cd hestia-proxy && chmod +x ./hestia-proxy.sh
 ```
 
-##Modes of Operation
+## Modes of Operation
 
 This script supports two modes of operation:
 
