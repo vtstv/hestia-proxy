@@ -2,6 +2,7 @@
 
 # HestiaCP Nginx Template Manager
 # https://github.com/vtstv/hestia-proxy
+# hestia_proxy v0.2
 
 # Check if the script is run as root
 if [[ $EUID -ne 0 ]]; then
@@ -81,6 +82,21 @@ log_message() {
     esac
 }
 
+# Validate domain format
+validate_domain_name() {
+    local DOMAIN="$1"
+
+    if [[ "$DOMAIN" =~ _ ]]; then
+        log_message error "Domain names cannot contain underscores (_). (this rule is forced by HestiaCP)"
+        exit 1
+    fi
+
+    if [[ ! "$DOMAIN" =~ ^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$ ]]; then
+        log_message error "Invalid domain format: $DOMAIN"
+        exit 1
+    fi
+}
+
 # Validate proxy target
 validate_proxy_target() {
     if [[ -z "$PROXY_TARGET" ]]; then
@@ -139,6 +155,8 @@ complete_domain_setup() {
     local HESTIA_USER="$1"
     local DOMAIN="$2"
     local PROXY_TARGET="$3"
+
+    validate_domain_name "$DOMAIN"
 
     if [[ -z "$HESTIA_USER" || -z "$DOMAIN" || -z "$PROXY_TARGET" ]]; then
         log_message error "Usage: $0 add [hestiacp_user] [domain.com] [proxy_target]"
