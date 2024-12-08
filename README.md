@@ -27,11 +27,6 @@ This tool enables you to create, edit, delete, and manage domain configurations 
 
 Clone this repository to your server:
    
-   git clone https://github.com/vtstv/hestia-proxy.git
-   cd hestia-proxy
-   chmod +x ./hestia_proxy.sh
-or 
-
 ```
 git clone https://github.com/vtstv/hestia-proxy.git && cd hestia-proxy && chmod +x ./hestia_proxy.sh
 ```
@@ -43,6 +38,7 @@ This script supports two modes of operation:
 **Interactive Mode:**
 
 Run the script without arguments to enter an interactive menu for managing templates and domains.
+
 Example:
 ```
 sudo ./hestia_proxy.sh

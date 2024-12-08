@@ -91,14 +91,16 @@ validate_domain_name() {
     local DOMAIN="$1"
 
     if [[ "$DOMAIN" =~ _ ]]; then
-        log_message error "Domain names cannot contain underscores (_). (this rule is forced by HestiaCP)"
-        exit 1
+        echo -e "${RED}[ERROR]${NC} Domain names cannot contain underscores (_). (this rule is forced by HestiaCP)"
+        return 1
     fi
 
     if [[ ! "$DOMAIN" =~ ^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$ ]]; then
-        log_message error "Invalid domain format: $DOMAIN"
-        exit 1
+        echo -e "${RED}[ERROR]${NC} Invalid domain format: $DOMAIN"
+        return 1
     fi
+
+    return 0
 }
 
 # Validate proxy target
@@ -160,11 +162,15 @@ complete_domain_setup() {
     local DOMAIN="$2"
     local PROXY_TARGET="$3"
 
-    validate_domain_name "$DOMAIN"
+    # Validate domain format
+    if ! validate_domain_name "$DOMAIN"; then
+        log_message error "Invalid domain format: $DOMAIN"
+        return 1
+    fi
 
     if [[ -z "$HESTIA_USER" || -z "$DOMAIN" || -z "$PROXY_TARGET" ]]; then
         log_message error "Usage: $0 add [hestiacp_user] [domain.com] [proxy_target]"
-        exit 1
+        return 1
     fi
 
     # Get IP address
@@ -173,18 +179,32 @@ complete_domain_setup() {
 
     if [[ -z "$nat_ip" ]]; then
         log_message error "Could not retrieve IP for user $HESTIA_USER"
-        exit 1
+        return 1
     fi
 
+    # Create template
     create_template "$DOMAIN" "$PROXY_TARGET"
 
-    "$HESTIA/bin/v-add-web-domain" "$HESTIA_USER" "$DOMAIN" "$nat_ip" "no" "none"
+    # Add web domain
+    if ! "$HESTIA/bin/v-add-web-domain" "$HESTIA_USER" "$DOMAIN" "$nat_ip" "no" "none"; then
+        log_message error "Failed to add web domain: $DOMAIN"
+        return 1
+    fi
 
-    "$HESTIA/bin/v-add-letsencrypt-domain" "$HESTIA_USER" "$DOMAIN"
+    # Add Let's Encrypt SSL
+    if ! "$HESTIA/bin/v-add-letsencrypt-domain" "$HESTIA_USER" "$DOMAIN"; then
+        log_message error "Failed to add Let's Encrypt SSL for domain: $DOMAIN"
+        return 1
+    fi
 
-    "$HESTIA/bin/v-change-web-domain-tpl" "$HESTIA_USER" "$DOMAIN" "$DOMAIN"
+    # Change web domain template
+    if ! "$HESTIA/bin/v-change-web-domain-tpl" "$HESTIA_USER" "$DOMAIN" "$DOMAIN"; then
+        log_message error "Failed to change web domain template for domain: $DOMAIN"
+        return 1
+    fi
 
     log_message info "Domain $DOMAIN setup complete for user $HESTIA_USER"
+    return 0
 }
 
 # List available templates
@@ -223,17 +243,23 @@ edit_nginx_config() {
         exit 1
     fi
 
-    # Find the configuration file
+    # Search for the primary config and SSL config
     local config_file
-    config_file=$(find "$CONFIG_DIR" -name "*$DOMAIN*.conf")
+    config_file=$(find "$CONFIG_DIR" -name "$DOMAIN.conf" -o -name "$DOMAIN.ssl.conf" | head -n 1)
 
     if [[ -z "$config_file" ]]; then
         log_message error "No configuration found for $DOMAIN"
         exit 1
     fi
 
-    # Open the configuration file with the default editor
-    ${EDITOR:-nano} "$config_file"
+    # Check if nano is available, otherwise fallback to vim
+    local editor=${EDITOR:-nano}
+    if ! command -v "$editor" &>/dev/null; then
+        editor="vim"
+    fi
+
+    # Open the configuration file with the selected editor
+    "$editor" "$config_file"
 }
 
 # List domain configurations
@@ -277,46 +303,71 @@ fix_ssl() {
 }
 
 interactive_mode() {
-    PS3="Select an option: "
+    PS3="$(echo -e ${CYAN}"Select an option: "${NC})"
     options=("Add Proxy Template" "Complete Domain Setup" "List Templates" "Delete Template" "Edit Configuration" "List Configurations" "Fix SSL for a Domain" "Exit")
+
+    echo -e "${CYAN}Welcome to the HestiaCP Nginx Template Management Script${NC}"
+    echo -e "${GREEN}Please select an option:${NC}"
 
     select opt in "${options[@]}"; do
         case $opt in
         "Add Proxy Template")
+            echo -e "${YELLOW}Adding a new Proxy Template...${NC}"
             read -p "Enter template name: " template_name
             read -p "Enter proxy target (e.g., http://127.0.0.1:8080): " proxy_target
             PROXY_TARGET="$proxy_target" create_template "$template_name"
             ;;
         "Complete Domain Setup")
+            echo -e "${YELLOW}Completing domain setup...${NC}"
             read -p "Enter HestiaCP username: " hestia_user
-            read -p "Enter domain name: " domain
+            while true; do
+                read -p "Enter domain name: " domain
+                if validate_domain_name "$domain"; then
+                    break
+                else
+                    echo -e "${RED}Invalid domain. Please try again.${NC}"
+                fi
+            done
             read -p "Enter proxy target: " proxy_target
             complete_domain_setup "$hestia_user" "$domain" "$proxy_target"
             ;;
         "List Templates")
+            echo -e "${YELLOW}Listing all templates...${NC}"
             list_templates
             ;;
         "Delete Template")
+            echo -e "${YELLOW}Deleting a template...${NC}"
             read -p "Enter template name to delete: " template_name
             delete_template "$template_name"
             ;;
         "Edit Configuration")
+            echo -e "${YELLOW}Editing a domain's Nginx configuration...${NC}"
             read -p "Enter domain name: " domain
             edit_nginx_config "$domain"
             ;;
         "List Configurations")
+            echo -e "${YELLOW}Listing all domain configurations...${NC}"
             list_configs
             ;;
         "Fix SSL for a Domain")
+            echo -e "${YELLOW}Fixing SSL for a domain...${NC}"
             read -p "Enter HestiaCP username: " hestia_user
-            read -p "Enter domain name: " domain
+            while true; do
+                read -p "Enter domain name: " domain
+                if validate_domain_name "$domain"; then
+                    break
+                else
+                    echo -e "${RED}Invalid domain. Please try again.${NC}"
+                fi
+            done
             fix_ssl "$hestia_user" "$domain"
             ;;
         "Exit")
+            echo -e "${CYAN}Exiting. Have a great day!${NC}"
             break
             ;;
         *)
-            echo "Invalid option $REPLY"
+            echo -e "${RED}Invalid option $REPLY. Please select a valid option.${NC}"
             ;;
         esac
     done
