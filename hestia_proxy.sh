@@ -2,71 +2,34 @@
 
 # HestiaCP Nginx Template Manager
 # https://github.com/vtstv/hestia-proxy
-# hestia_proxy v0.3
+# hestia_proxy v0.4 
+
+readonly HESTIA_BASE_DIR="${HESTIA:-/usr/local/hestia}"
+readonly TEMPLATE_DIR="$HESTIA_BASE_DIR/data/templates/web/nginx/php-fpm"
+readonly CONFIG_DIR="/etc/nginx/conf.d/domains"
+readonly BACKUP_DIR="$HESTIA_BASE_DIR/data/templates/web/nginx_backup"
+readonly V_ADD_WEB_DOMAIN_CMD="$HESTIA_BASE_DIR/bin/v-add-web-domain"
+readonly V_ADD_LETSENCRYPT_CMD="$HESTIA_BASE_DIR/bin/v-add-letsencrypt-domain"
+readonly V_CHANGE_WEB_DOMAIN_TPL_CMD="$HESTIA_BASE_DIR/bin/v-change-web-domain-tpl"
+readonly V_LIST_USER_IPS_CMD="$HESTIA_BASE_DIR/bin/v-list-user-ips"
+
+
+# --- Color Codes ---
+readonly GREEN='\033[0;32m'
+readonly RED='\033[0;31m'
+readonly YELLOW='\033[1;33m'
+readonly CYAN='\033[0;36m'
+readonly NC='\033[0m' # No Color
+
 
 # Check if the script is run as root
 if [[ $EUID -ne 0 ]]; then
-    echo -e "\033[0;31m[ERROR]\033[0m This script must be run as root. Use 'sudo' to execute it."
+    echo -e "${RED}[ERROR]${NC} This script must be run as root. Use 'sudo' to execute it."
     exit 1
 fi
 
-HESTIA=${HESTIA:-/usr/local/hestia}
 
-TEMPLATE_DIR="$HESTIA/data/templates/web/nginx/php-fpm"
-CONFIG_DIR="/etc/nginx/conf.d/domains"
-BACKUP_DIR="$HESTIA/data/templates/web/nginx_backup"
-
-# Color codes for output
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-NC='\033[0m'
-
-display_help() {
-    echo -e "${CYAN}HestiaCP Nginx Template Management Script${NC}"
-    echo "Manages Nginx templates and domain configurations in HestiaCP"
-    echo
-    echo -e "${GREEN}Usage:${NC}"
-    echo "  $0 [COMMAND] [OPTIONS]"
-    echo
-    echo -e "${YELLOW}Commands:${NC}"
-    echo -e "  ${GREEN}list${NC}                  List available Nginx templates"
-    echo -e "  ${GREEN}add${NC}                   Add a new template or complete domain setup"
-    echo -e "  ${GREEN}delete${NC}                Delete an existing template"
-    echo -e "  ${GREEN}edit${NC}                  Edit domain Nginx configuration"
-    echo -e "  ${GREEN}configs${NC}               List domain configurations"
-    echo -e "  ${GREEN}fix_ssl${NC}               Reapply / Fix SSL for a domain"
-    echo -e "  ${GREEN}--help${NC}, ${GREEN}-h${NC}            Show this help message"
-    echo
-    echo -e "${YELLOW}Examples:${NC}"
-    echo "  # List all available templates"
-    echo -e "  ${CYAN}$0 list${NC}"
-    echo
-    echo "  # Add a new Nginx proxy template"
-    echo -e "  ${CYAN}$0 add example_template http://127.0.0.1:8080${NC}"
-    echo
-    echo "  # Complete domain setup with proxy"
-    echo -e "  ${CYAN}$0 add hestiacp_user domain.com http://127.0.0.1:8080${NC}"
-    echo
-    echo "  # Delete an existing template"
-    echo -e "  ${CYAN}$0 delete example_template${NC}"
-    echo
-    echo "  # Edit a domain's Nginx configuration"
-    echo -e "  ${CYAN}$0 edit domain.com${NC}"
-    echo
-    echo "  # Reapply / Fix SSL for a domain"
-    echo -e "  ${CYAN}$0 fix-ssl hestiacp_user domain.com${NC}"
-    echo
-    echo -e "${RED}Note:${NC} This script must be run with root privileges"
-    echo
-    echo -e "${YELLOW}Troubleshooting:${NC}"
-    echo "- Ensure HestiaCP is installed"
-    echo "- Verify correct paths and user permissions"
-    echo "- Check HestiaCP logs for detailed error information"
-}
-
-# Logging function
+# Logging function with consistent colors
 log_message() {
     local type="$1"
     local message="$2"
@@ -90,14 +53,19 @@ log_message() {
 validate_domain_name() {
     local DOMAIN="$1"
 
-    if [[ "$DOMAIN" =~ _ ]]; then
-        echo -e "${RED}[ERROR]${NC} Domain names cannot contain underscores (_). (this rule is forced by HestiaCP)"
+    if [[ -z "$DOMAIN" ]]; then
+        log_message error "Domain name cannot be empty."
         return 1
     fi
 
-    if [[ ! "$DOMAIN" =~ ^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$ ]]; then
-        echo -e "${RED}[ERROR]${NC} Invalid domain format: $DOMAIN"
-        return 1
+    if [[ "$DOMAIN" =~ _ ]]; then
+        log_message error "Domain names cannot contain underscores (_). (this rule is forced by HestiaCP)"
+        return 2
+    fi
+
+    if [[ ! "$DOMAIN" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,6}$ ]]; then
+        log_message error "Invalid domain format: $DOMAIN"
+        return 3
     fi
 
     return 0
@@ -105,29 +73,116 @@ validate_domain_name() {
 
 # Validate proxy target
 validate_proxy_target() {
+    local PROXY_TARGET="$1"
+
     if [[ -z "$PROXY_TARGET" ]]; then
         log_message error "Proxy target is required."
-        exit 1
+        return 1
     fi
 
-    # Basic URL validation
-    if [[ ! "$PROXY_TARGET" =~ ^https?:// ]]; then
-        log_message error "Invalid proxy target. Must start with http:// or https://"
-        exit 1
+    # More robust URL validation using regex
+    if [[ ! "$PROXY_TARGET" =~ ^https?://([a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)*(:[0-9]+)?)(/.*)?$ ]]; then
+        log_message error "Invalid proxy target format: $PROXY_TARGET"
+        return 2
     fi
+
+    return 0
 }
 
-# Create Nginx template files
+# Get user's avaible IP in HestiaCP
+get_user_ip() {
+    local HESTIA_USER="$1"
+
+    if ! command -v "$V_LIST_USER_IPS_CMD" &> /dev/null; then
+        log_message error "Command not found: $V_LIST_USER_IPS_CMD"
+        return 4
+    fi
+
+    if ! id -u "$HESTIA_USER" &> /dev/null; then
+        log_message error "Hestia user does not exist: $HESTIA_USER"
+        return 5
+    fi
+
+    local output=$("$V_LIST_USER_IPS_CMD" "$HESTIA_USER")
+    local nat_ip=$(echo "$output" | awk '$2 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ { print $2 }')
+
+    if [[ -z "$nat_ip" ]]; then
+        log_message error "Could not retrieve IP for user $HESTIA_USER"
+        return 6
+    fi
+
+    echo "$nat_ip"
+}
+
+add_web_domain() {
+    local HESTIA_USER="$1"
+    local DOMAIN="$2"
+    local IP="$3"
+
+    if ! command -v "$V_ADD_WEB_DOMAIN_CMD" &> /dev/null; then
+        log_message error "Command not found: $V_ADD_WEB_DOMAIN_CMD"
+        return 4
+    fi
+
+    if ! "$V_ADD_WEB_DOMAIN_CMD" "$HESTIA_USER" "$DOMAIN" "$IP" "no" "none"; then
+        log_message error "Failed to add web domain: $DOMAIN"
+        return 7
+    fi
+
+    return 0
+}
+
+# Add Let's Encrypt SSL
+add_letsencrypt_ssl() {
+    local HESTIA_USER="$1"
+    local DOMAIN="$2"
+
+    if ! command -v "$V_ADD_LETSENCRYPT_CMD" &> /dev/null; then
+        log_message error "Command not found: $V_ADD_LETSENCRYPT_CMD"
+        return 4
+    fi
+
+    if ! "$V_ADD_LETSENCRYPT_CMD" "$HESTIA_USER" "$DOMAIN"; then
+        log_message error "Failed to add Let's Encrypt SSL for domain: $DOMAIN"
+        log_message error "Check $HESTIA_BASE_DIR/logs/LE-* for details."
+        return 8
+    fi
+
+    return 0
+}
+
+# Change web domain template
+change_web_domain_template() {
+    local HESTIA_USER="$1"
+    local DOMAIN="$2"
+    local TEMPLATE="$3"
+
+    if ! command -v "$V_CHANGE_WEB_DOMAIN_TPL_CMD" &> /dev/null; then
+        log_message error "Command not found: $V_CHANGE_WEB_DOMAIN_TPL_CMD"
+        return 4
+    fi
+
+    if ! "$V_CHANGE_WEB_DOMAIN_TPL_CMD" "$HESTIA_USER" "$DOMAIN" "$TEMPLATE"; then
+        log_message error "Failed to change web domain template for domain: $DOMAIN"
+        return 9
+    fi
+
+    return 0
+}
+
+# Create Nginx web template files
 create_template() {
     local DOMAIN_NAME="${1:-default_template}"
     local PROXY_TARGET="${2:-http://127.0.0.1:8080}"
 
-    # Check for empty input
     if [[ -z "$DOMAIN_NAME" ]]; then
         log_message error "Template name cannot be empty"
-        return
+        return 1
     fi
 
+    if ! validate_proxy_target "$PROXY_TARGET"; then
+        return 2
+    fi
     # Use valid_templates logic for domain validation
     local valid_templates=()
     if [[ "$DOMAIN_NAME" =~ ^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$ ]]; then
@@ -136,19 +191,16 @@ create_template() {
 
     if [[ ${#valid_templates[@]} -eq 0 ]]; then
         log_message error "'$DOMAIN_NAME' is not a valid domain name"
-        return
+        return 3
     fi
 
-    # Check for duplicates
     if [[ -e "$TEMPLATE_DIR/$DOMAIN_NAME.tpl" || -e "$TEMPLATE_DIR/$DOMAIN_NAME.stpl" ]]; then
         log_message error "A template with the name '$DOMAIN_NAME' already exists"
-        return
+        return 10
     fi
 
-    # Ensure the template directory exists
     mkdir -p "$TEMPLATE_DIR"
 
-    # Create the HTTP template
     cat <<EOF >"$TEMPLATE_DIR/$DOMAIN_NAME.tpl"
 server {
     listen      %ip%:%web_port%;
@@ -163,7 +215,6 @@ server {
 }
 EOF
 
-    # Create the HTTPS template
     cat <<EOF >"$TEMPLATE_DIR/$DOMAIN_NAME.stpl"
 server {
     listen      %ip%:%web_ssl_port% ssl http2;
@@ -180,60 +231,48 @@ server {
 }
 EOF
 
+    chmod 0640 "$TEMPLATE_DIR/$DOMAIN_NAME.tpl" "$TEMPLATE_DIR/$DOMAIN_NAME.stpl"
+
     log_message info "Created Nginx templates for $DOMAIN_NAME"
 }
-
 
 complete_domain_setup() {
     local HESTIA_USER="$1"
     local DOMAIN="$2"
     local PROXY_TARGET="$3"
 
-    # Validate domain format
-    if ! validate_domain_name "$DOMAIN"; then
-        log_message error "Invalid domain format: $DOMAIN"
-        return 1
-    fi
-
     if [[ -z "$HESTIA_USER" || -z "$DOMAIN" || -z "$PROXY_TARGET" ]]; then
         log_message error "Usage: $0 add [hestiacp_user] [domain.com] [proxy_target]"
         return 1
     fi
 
-    # Get IP address
-    local output=$("$HESTIA/bin/v-list-user-ips" "$HESTIA_USER")
-    local nat_ip=$(echo "$output" | awk '$2 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ { print $2 }')
-
-    if [[ -z "$nat_ip" ]]; then
-        log_message error "Could not retrieve IP for user $HESTIA_USER"
-        return 1
+    if ! validate_domain_name "$DOMAIN"; then
+        return 2
     fi
 
-    # Create template
+    if ! validate_proxy_target "$PROXY_TARGET"; then
+        return 3
+    fi
+
+    local nat_ip=$(get_user_ip "$HESTIA_USER")
+    [[ $? -ne 0 ]] && return $?
+
     create_template "$DOMAIN" "$PROXY_TARGET"
+    [[ $? -ne 0 ]] && return $?
 
-    # Add web domain
-    if ! "$HESTIA/bin/v-add-web-domain" "$HESTIA_USER" "$DOMAIN" "$nat_ip" "no" "none"; then
-        log_message error "Failed to add web domain: $DOMAIN"
-        return 1
-    fi
+    add_web_domain "$HESTIA_USER" "$DOMAIN" "$nat_ip"
+    [[ $? -ne 0 ]] && return $?
 
-    # Add Let's Encrypt SSL
-    if ! "$HESTIA/bin/v-add-letsencrypt-domain" "$HESTIA_USER" "$DOMAIN"; then
-        log_message error "Failed to add Let's Encrypt SSL for domain: $DOMAIN"
-        return 1
-    fi
+    add_letsencrypt_ssl "$HESTIA_USER" "$DOMAIN"
+    [[ $? -ne 0 ]] && return $?
 
-    # Change web domain template
-    if ! "$HESTIA/bin/v-change-web-domain-tpl" "$HESTIA_USER" "$DOMAIN" "$DOMAIN"; then
-        log_message error "Failed to change web domain template for domain: $DOMAIN"
-        return 1
-    fi
+    change_web_domain_template "$HESTIA_USER" "$DOMAIN" "$DOMAIN"
+    [[ $? -ne 0 ]] && return $?
 
     log_message info "Domain $DOMAIN setup complete for user $HESTIA_USER"
-    return 0
 }
 
+# List available Nginx templates
 list_templates() {
     log_message info "Available Nginx Templates:"
 
@@ -243,7 +282,7 @@ list_templates() {
 
     if [[ ${#templates[@]} -eq 0 ]]; then
         log_message warning "No templates found in $TEMPLATE_DIR"
-        return
+        return 0
     fi
 
     # Validate domain names and collect valid templates
@@ -257,7 +296,7 @@ list_templates() {
     # Display valid templates with numbers
     if [[ ${#valid_templates[@]} -eq 0 ]]; then
         log_message warning "No templates with a valid domain format found."
-        return
+        return 0
     fi
 
     echo
@@ -269,10 +308,10 @@ list_templates() {
 
     # Prompt for user choice
     while true; do
-        read -p "Enter your choice (e.g., '2e' to edit, '3d' to delete): " choice
+        read -p "Enter template name (or number with 'e'/'d'): " choice
         if [[ "$choice" == "q" ]]; then
-            echo "Exiting."
-            break
+            log_message info "Exiting."
+            return 0
         elif [[ "$choice" =~ ^([0-9]+)([ed])$ ]]; then
             local index=$((BASH_REMATCH[1] - 1))
             local action=${BASH_REMATCH[2]}
@@ -292,8 +331,21 @@ list_templates() {
             else
                 log_message error "Invalid selection."
             fi
+        elif [[ "${valid_templates[*]}" =~ "$choice" ]]; then
+            read -p "Edit (e) or delete (d) '$choice'? " action
+            case "$action" in
+            e)
+                edit_template "$choice"
+                ;;
+            d)
+                delete_template "$choice"
+                ;;
+            *)
+                log_message error "Invalid action. Please enter 'e' or 'd'."
+                ;;
+            esac
         else
-            log_message error "Invalid input. Use a number followed by 'e' (edit) or 'd' (delete)."
+            log_message error "Invalid input. Enter a valid template name or number followed by 'e' (edit) or 'd' (delete)."
         fi
     done
 }
@@ -305,7 +357,7 @@ edit_template() {
 
     if [[ ! -f "$file_path" ]]; then
         log_message error "Template file not found: $file_path"
-        return
+        return 11
     fi
 
     local editor=${EDITOR:-nano}
@@ -324,18 +376,17 @@ delete_template() {
 
     if [[ -z "$TEMPLATE_NAME" ]]; then
         log_message error "Please specify a template name to delete"
-        return
+        return 1
     fi
 
     # Confirmation prompt
     read -p "Are you sure you want to delete the template '$TEMPLATE_NAME'? (y/N): " confirm
     if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
         log_message info "Deletion of template '$TEMPLATE_NAME' canceled"
-        return
+        return 0
     fi
 
     # Backup directory
-
     mkdir -p "$BACKUP_DIR"
 
     # Backup before deleting
@@ -349,12 +400,13 @@ delete_template() {
     log_message info "Deleted template '$TEMPLATE_NAME' (backed up in $BACKUP_DIR)"
 }
 
+# Edit a domain's Nginx configuration
 edit_nginx_config() {
     local DOMAIN="$1"
 
     if [[ -z "$DOMAIN" ]]; then
         log_message error "Please specify a domain to edit"
-        exit 1
+        return 1
     fi
 
     # Search for the primary config and SSL config
@@ -363,7 +415,7 @@ edit_nginx_config() {
 
     if [[ -z "$config_file" ]]; then
         log_message error "No configuration found for $DOMAIN"
-        exit 1
+        return 12
     fi
 
     # Check if nano is available, otherwise fallback to vim
@@ -421,33 +473,26 @@ fix_ssl() {
 
     if [[ -z "$HESTIA_USER" || -z "$DOMAIN" ]]; then
         log_message error "Usage: $0 fix-ssl [hestiacp_user] [domain.com]"
-        exit 1
+        return 1
     fi
 
     log_message info "Reapplying SSL for domain: $DOMAIN (User: $HESTIA_USER)"
 
-    "$HESTIA/bin/v-change-web-domain-tpl" "$HESTIA_USER" "$DOMAIN" "default"
-    if [[ $? -ne 0 ]]; then
-        log_message error "Failed to set template to 'Default' for $DOMAIN"
-        exit 1
-    fi
+    change_web_domain_template "$HESTIA_USER" "$DOMAIN" "default"
+    [[ $? -ne 0 ]] && return $?
 
-    "$HESTIA/bin/v-add-letsencrypt-domain" "$HESTIA_USER" "$DOMAIN"
-    if [[ $? -ne 0 ]]; then
-        log_message error "Failed to apply Let's Encrypt SSL for $DOMAIN"
-        log_message error "Check $HESTIA/logs/LE-* for details."
-        exit 1
-    fi
+    add_letsencrypt_ssl "$HESTIA_USER" "$DOMAIN"
+    [[ $? -ne 0 ]] && return $?
+
     log_message info "Successfully applied Let's Encrypt SSL for $DOMAIN"
 
-    "$HESTIA/bin/v-change-web-domain-tpl" "$HESTIA_USER" "$DOMAIN" "$DOMAIN"
-    if [[ $? -ne 0 ]]; then
-        log_message error "Failed to reapply custom template for $DOMAIN"
-        exit 1
-    fi
+    change_web_domain_template "$HESTIA_USER" "$DOMAIN" "$DOMAIN"
+    [[ $? -ne 0 ]] && return $?
+
     log_message info "Successfully reapplied custom template for $DOMAIN"
 }
 
+# Interactive mode
 interactive_mode() {
     PS3="$(echo -e ${CYAN}"Select an option: "${NC})"
     options=("Add Proxy Template" "Complete Domain Setup" "List Templates" "Delete Template" "Edit Configuration" "List Configurations" "Fix SSL for a Domain" "Exit")
@@ -459,7 +504,16 @@ interactive_mode() {
         case $opt in
         "Add Proxy Template")
             echo -e "${YELLOW}Adding a new Proxy Template...${NC}"
-            read -p "Enter template name: " template_name
+            while true; do
+                read -p "Enter template name: " template_name
+                if [[ -z "$template_name" ]]; then
+                    log_message error "Template name cannot be empty."
+                elif [[ "$template_name" =~ ^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$ && "$template_name" =~ _ ]]; then
+                    log_message error "Template name cannot contain underscores if it's also a domain name."
+                else
+                    break
+                fi
+            done
             read -p "Enter proxy target (e.g., http://127.0.0.1:8080): " proxy_target
             PROXY_TARGET="$proxy_target" create_template "$template_name"
             ;;
@@ -517,6 +571,51 @@ interactive_mode() {
             ;;
         esac
     done
+}
+
+# --- Main ---
+
+display_help() {
+    echo -e "${CYAN}HestiaCP Nginx Template Management Script${NC}"
+    echo "Manages Nginx templates and domain configurations in HestiaCP"
+    echo
+    echo -e "${GREEN}Usage:${NC}"
+    echo "  $0 [COMMAND] [OPTIONS]"
+    echo
+    echo -e "${YELLOW}Commands:${NC}"
+    echo -e "  ${GREEN}list${NC}                  List available Nginx templates"
+    echo -e "  ${GREEN}add${NC}                   Add a new template or complete domain setup"
+    echo -e "  ${GREEN}delete${NC}                Delete an existing template"
+    echo -e "  ${GREEN}edit${NC}                  Edit domain Nginx configuration"
+    echo -e "  ${GREEN}configs${NC}               List domain configurations"
+    echo -e "  ${GREEN}fix_ssl${NC}               Reapply / Fix SSL for a domain"
+    echo -e "  ${GREEN}--help${NC}, ${GREEN}-h${NC}            Show this help message"
+    echo
+    echo -e "${YELLOW}Examples:${NC}"
+    echo "  # List all available templates"
+    echo -e "  ${CYAN}$0 list${NC}"
+    echo
+    echo "  # Add a new Nginx proxy template"
+    echo -e "  ${CYAN}$0 add example_template http://127.0.0.1:8080${NC}"
+    echo
+    echo "  # Complete domain setup with proxy"
+    echo -e "  ${CYAN}$0 add hestiacp_user domain.com http://127.0.0.1:8080${NC}"
+    echo
+    echo "  # Delete an existing template"
+    echo -e "  ${CYAN}$0 delete example_template${NC}"
+    echo
+    echo "  # Edit a domain's Nginx configuration"
+    echo -e "  ${CYAN}$0 edit domain.com${NC}"
+    echo
+    echo "  # Reapply / Fix SSL for a domain"
+    echo -e "  ${CYAN}$0 fix-ssl hestiacp_user domain.com${NC}"
+    echo
+    echo -e "${RED}Note:${NC} This script must be run with root privileges"
+    echo
+    echo -e "${YELLOW}Troubleshooting:${NC}"
+    echo "- Ensure HestiaCP is installed"
+    echo "- Verify correct paths and user permissions"
+    echo "- Check HestiaCP logs for detailed error information"
 }
 
 main() {
